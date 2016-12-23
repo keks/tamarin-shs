@@ -1,0 +1,109 @@
+/*
+How secure is secret handshake?
+*/
+
+theory SHS
+begin
+
+builtins: diffie-hellman, signing, symmetric-encryption
+
+functions: mac/2, macv/3
+
+equations: macv(mac(m, k), m, k) = true
+
+rule Register_pk:
+		[ Fr(~ltk) ]
+	-->
+		[ !Ltk($A, ~ltk), !Pk($A, pk(~ltk)) ]
+end
+
+rule Get_pk:
+		[ !Pk(A, pk) ]
+	-->
+		[ Out(pk) ]
+end
+
+rule Reveal_ltk:
+		[ !Ltk(A, ltk) ]
+	--[ LtkReveal(A) ]->
+		[ Out(ltk) ]
+end
+
+// initiate client
+rule Client_init:
+		[ Fr(~eph)
+		,	!Ltk($A, ~ltkA)
+		, !Pk($S, pkS)
+		]
+	-->
+		[ Client_new(A, S, ltkA, eph, pkS)
+		]
+end
+
+// send client challenge
+rule Client_sendChal:
+		[ Client_new($A, $S, ltkA, eph, pkS)
+		]
+	-->
+		[ Client_chalSent($A, $S, ltkA, eph, pkS, $appKey)
+		, Out(g^eph, mac(g^eph, h($appKey)))
+		]
+end
+
+// send server challenge
+rule Server_recvChal:
+		[ Fr(~eph)
+		, !Ltk($S, ~ltkS)
+		, In(dhA, dhmac)
+		]
+	-->
+		[ Server_chalRecvd($S, ~eph, dhA, $appKey, macv(dhmac, dhA, h($appKey)))
+		]
+end
+
+rule Server_sendChal:
+		[ Server_chalRecvd(S, eph, dhA, appKey, true)
+		]
+	-->
+		[ Server_chalSent($, eph, dhA, appKey)
+		//, Out(g^eph, mac(g^eph, dhA^eph)) <- this is the actual implementation
+		, Out(g^eph, mac(g^eph, h(<dhA^eph, appKey>)))
+		]
+end
+	
+
+// send client auth
+rule Client_recvChal:
+		let eKey = h(<appKey, dhS^eph, pkS^eph>)
+		in
+		[	Client_chalSent(A, S, ltkA, eph, pkS, appKey)
+		,	In(dhS, dhmac)
+		]
+	--[
+		True(macv(dhmac, dhS, h(<dhS^eph, $appKey>)))
+		]->
+		[ Client_authSent(A, S, ltkA, dhS, eph, pkS, appKey)
+		, Out(senc(<g^ltkA, sign(h(<appkey, pkS, dhS^eph>), ltkA)>, eKey))
+		]
+end
+
+// server: recv client auth
+rule Server_recvAuth:
+		[ Server_chalSent(S, eph, dhA, appKey)
+		, In(encAuth)
+		]
+	-->
+		[	Server_sendAuth(S, eph, dhA, pkA, appKey)
+		, senc(<pkA, sig>, h(<appKey, dhA^eph, dhA^ltkS>))
+		]
+end
+
+// server: send auth
+rule Server_sendAuth:
+		[ Server_sendAuth(S, eph, pkA, appKey, true) ]
+	-->
+		[]
+end
+
+axiom IsTrue:
+	"All x #i. True(x) @i ==> x == true"
