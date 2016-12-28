@@ -7,27 +7,27 @@ begin
 
 builtins: diffie-hellman, signing, symmetric-encryption
 
-functions: mac/2, macv/3
+functions: mac/2, macv/3, ed2cv/1, h/1
 
 equations: macv(mac(m, k), m, k) = true
 
 rule Register_pk:
 		[ Fr(~ltk) ]
 	-->
-		[ !Ltk($A, ~ltk), !Pk($A, pk(~ltk)) ]
-end
+		[ !Ltk($A, ~ltk), !Pk($A, <'g'^~ltk, pk(~ltk)>) ]
+
 
 rule Get_pk:
 		[ !Pk(A, pk) ]
 	-->
 		[ Out(pk) ]
-end
+
 
 rule Reveal_ltk:
 		[ !Ltk(A, ltk) ]
 	--[ LtkReveal(A) ]->
 		[ Out(ltk) ]
-end
+
 
 // initiate client
 rule Client_init:
@@ -36,74 +36,105 @@ rule Client_init:
 		, !Pk($S, pkS)
 		]
 	-->
-		[ Client_new(A, S, ltkA, eph, pkS)
+		[ Client_new($A, $S, ~eph, pkS)
 		]
-end
+
 
 // send client challenge
 rule Client_sendChal:
-		[ Client_new($A, $S, ltkA, eph, pkS)
+		[ Client_new($A, $S, eph, pkS)
+		, !Ltk($A, ltkA)
 		]
 	-->
 		[ Client_chalSent($A, $S, ltkA, eph, pkS, $appKey)
-		, Out(g^eph, mac(g^eph, h($appKey)))
+		, Out(<'g'^eph, mac('g'^eph, h($appKey))>)
 		]
-end
+
 
 // send server challenge
 rule Server_recvChal:
 		[ Fr(~eph)
-		, !Ltk($S, ~ltkS)
-		, In(dhA, dhmac)
+		, In(<dhA, dhmac>)
 		]
-	-->
-		[ Server_chalRecvd($S, ~eph, dhA, $appKey, macv(dhmac, dhA, h($appKey)))
+	--[ True(macv(dhmac, dhA, h($appKey))) ]->
+		[ Server_chalSent($S, ~eph, dhA, $appKey)
+		//, Out('g'^~eph, mac('g'^~eph, dhA^~eph)) <- this is the actual implementation
+		, Out(<'g'^~eph, mac('g'^~eph, h(<dhA^~eph, $appKey>))>)
 		]
-end
 
-rule Server_sendChal:
-		[ Server_chalRecvd(S, eph, dhA, appKey, true)
-		]
-	-->
-		[ Server_chalSent($, eph, dhA, appKey)
-		//, Out(g^eph, mac(g^eph, dhA^eph)) <- this is the actual implementation
-		, Out(g^eph, mac(g^eph, h(<dhA^eph, appKey>)))
-		]
-end
 	
 
 // send client auth
 rule Client_recvChal:
-		let eKey = h(<appKey, dhS^eph, pkS^eph>)
+		let eKey = h(<$appKey, dhS^eph, pkS^eph>)
 		in
-		[	Client_chalSent(A, S, ltkA, eph, pkS, appKey)
-		,	In(dhS, dhmac)
+		[	Client_chalSent(A, S, ltkA, eph, pkS, $appKey)
+		,	In(<dhS, dhmac>)
 		]
-	--[
-		True(macv(dhmac, dhS, h(<dhS^eph, $appKey>)))
-		]->
-		[ Client_authSent(A, S, ltkA, dhS, eph, pkS, appKey)
-		, Out(senc(<g^ltkA, sign(h(<appkey, pkS, dhS^eph>), ltkA)>, eKey))
+	--[ True(macv(dhmac, dhS, h(<dhS^eph, $appKey>))) ]->
+	//--[ True(macv(dhmac, dhS, h(<$appKey>))) ]->
+		[ Client_authSent(A, S, dhS, eph, pkS, $appKey)
+		, Out(senc(<'g'^ltkA, sign(h(<<$appKey, pkS>, dhS^eph>), ltkA)>, eKey))
 		]
-end
+
 
 // server: recv client auth
 rule Server_recvAuth:
-		[ Server_chalSent(S, eph, dhA, appKey)
+		let	dKey = h(<$appKey, fst(dhA)^eph, fst(dhA)^ltk>)
+				auth = sdec(encAuth, dKey)
+				pkA  = fst(auth)
+				rxsig  = snd(auth)
+				rx   = h(<<$appKey, 'g'^ltk>,dhA^eph>)
+				sk   = h(<<$appKey, dhA^eph>,<fst(pkA)^eph, dhA^ltk>>)
+				sig  = sign(<<$appKey,auth>,fst(pkA)^ltk>, ltk)
+		in
+		[ Server_chalSent(S, eph, dhA, $appKey)
 		, In(encAuth)
+		, !Ltk(S, ltk)
 		]
-	-->
-		[	Server_sendAuth(S, eph, dhA, pkA, appKey)
-		, senc(<pkA, sig>, h(<appKey, dhA^eph, dhA^ltkS>))
+	--[ True(verify(rx, rxsig, snd(pkA)))
+		,	SessKeyR(S, sk)
+		]->
+		[ Out(senc(sig, sk))
 		]
-end
 
-// server: send auth
-rule Server_sendAuth:
-		[ Server_sendAuth(S, eph, pkA, appKey, true) ]
-	-->
+
+// send client auth
+rule Client_recvAuth:
+		let	auth = sdec(encAuth, sk)
+				pkS  = fst(auth)
+				rxsig  = snd(auth)
+				hmsg   = h(<<$appKey, pkS>,dhS^eph>)
+				rx   = h(<<$appKey, hmsg>,h(fst(pkS)^ltk)>)
+				sk   = h(<<$appKey, dhS^eph>,<dhS^ltk, pkS^eph>>)
+		in
+		[	Client_authSent(A, S, dhS, eph, pkS, $appKey)
+		,	!Ltk(A, ltk)
+		,	In(encAuth)
+		]
+	--[ SessKeyI(S, sk)
+		]->
 		[]
 end
 
+axiom Eq:
+	"All x y #i. True(x ,y) @i ==> x == y"
+
 axiom IsTrue:
 	"All x #i. True(x) @i ==> x == true"
+
+
+lemma Client_auth:
+  " /* For all session keys 'k' setup by clients with a server 'S' */
+    ( All S k #i.  SessKeyI(S, k) @ #i
+       ==>
+         /* there is a server that answered the request */
+       ( (Ex #a. SessKeyR(S, k) @ a)
+         /* or the adversary performed a long-term key reveal on 'S'
+            before the key was setup. */
+       | (Ex #r. Reveal_ltk(S) @ r & r < i)
+       )
+    )
+  "
+
+
