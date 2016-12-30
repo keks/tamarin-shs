@@ -29,37 +29,32 @@ rule Reveal_ltk:
 		[ Out(ltk) ]
 
 
-// initiate client
-rule Client_init:
-		[ Fr(~eph)
-		,	!Ltk($A, ~ltkA)
+// send client challenge
+rule Client_sendChal:
+		[ !Fr(~eph)
+		, !Ltk($A, ltkA)
 		, !Pk($S, pkS)
 		]
 	-->
-		[ Client_new($A, $S, ~eph, pkS)
-		]
-
-
-// send client challenge
-rule Client_sendChal:
-		[ Client_new($A, $S, eph, pkS)
-		, !Ltk($A, ltkA)
-		]
-	-->
-		[ Client_chalSent($A, $S, ltkA, eph, pkS, $appKey)
-		, Out(<'g'^eph, mac('g'^eph, h($appKey))>)
+		[ Client_chalSent($A, $S, ltkA, ~eph, pkS, $appKey)
+		, Out(<'g'^~eph, mac('g'^~eph, h($appKey))>)
 		]
 
 
 // send server challenge
 rule Server_recvChal:
+		let macKeyTx = h(<dhA^~eph, $appKey>)
+		//let macKey = h($appKey)<- this is the actual implementation
+			msgMac = mac('g'^~eph, macKeyTx)
+			macKeyRx = h($appKey)
+			rxMacOk = macv(dhmac, dhA, macKeyRx)
+		in
 		[ Fr(~eph)
 		, In(<dhA, dhmac>)
 		]
-	--[ True(macv(dhmac, dhA, h($appKey))) ]->
+	--[ True(rxMacOk) ]->
 		[ Server_chalSent($S, ~eph, dhA, $appKey)
-		//, Out('g'^~eph, mac('g'^~eph, dhA^~eph)) <- this is the actual implementation
-		, Out(<'g'^~eph, mac('g'^~eph, h(<dhA^~eph, $appKey>))>)
+		, Out(<'g'^~eph, msgMac>)
 		]
 
 	
@@ -77,6 +72,7 @@ rule Client_recvChal:
 		, Out(senc(<'g'^ltkA, sign(h(<<$appKey, pkS>, dhS^eph>), ltkA)>, eKey))
 		]
 
+/*
 
 // server: recv client auth
 rule Server_recvAuth:
@@ -115,15 +111,18 @@ rule Client_recvAuth:
 	--[ SessKeyI(S, sk)
 		]->
 		[]
-end
+*/
 
+/*
 axiom Eq:
-	"All x y #i. True(x ,y) @i ==> x == y"
+	"All x y #i. Eq(x, y) @i ==> x = y"
 
 axiom IsTrue:
-	"All x #i. True(x) @i ==> x == true"
+	"All x #i. True(x) @i ==> x = true"
+*/
 
 
+/*
 lemma Client_auth:
   " /* For all session keys 'k' setup by clients with a server 'S' */
     ( All S k #i.  SessKeyI(S, k) @ #i
@@ -136,5 +135,5 @@ lemma Client_auth:
        )
     )
   "
-
-
+*/
+end
