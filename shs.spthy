@@ -31,7 +31,7 @@ rule Reveal_ltk:
 
 // send client challenge
 rule Client_sendChal:
-		[ !Fr(~eph)
+		[ Fr(~eph)
 		, !Ltk($A, ltkA)
 		, !Pk($S, pkS)
 		]
@@ -57,26 +57,27 @@ rule Server_recvChal:
 		, Out(<'g'^~eph, msgMac>)
 		]
 
-	
 
 // send client auth
 rule Client_recvChal:
-		let eKey = h(<$appKey, dhS^eph, pkS^eph>)
+		let eKey = h(<<$appKey, dhS^eph>, pkS^eph>)
+		    sigd = h(<<$appKey, pkS>, dhS^eph>)
+		    sig  = sign(sigd, ltkA)
+		    auth = senc(<'g'^ltkA, sig>, eKey)
 		in
 		[	Client_chalSent(A, S, ltkA, eph, pkS, $appKey)
 		,	In(<dhS, dhmac>)
 		]
-	--[ True(macv(dhmac, dhS, h(<dhS^eph, $appKey>))) ]->
-	//--[ True(macv(dhmac, dhS, h(<$appKey>))) ]->
+	--[ True(macv(dhmac, dhS, h(<dhS^eph, $appKey>))) ]-> // according to spec
+	//--[ True(macv(dhmac, dhS, h($appKey))) ]-> // actual implementation diverges from spec
 		[ Client_authSent(A, S, dhS, eph, pkS, $appKey)
-		, Out(senc(<'g'^ltkA, sign(h(<<$appKey, pkS>, dhS^eph>), ltkA)>, eKey))
+		, Out(auth)
 		]
 
-/*
 
 // server: recv client auth
 rule Server_recvAuth:
-		let	dKey = h(<$appKey, fst(dhA)^eph, fst(dhA)^ltk>)
+		let	dKey = h(<<$appKey, fst(dhA)^eph>, fst(dhA)^ltk>)
 				auth = sdec(encAuth, dKey)
 				pkA  = fst(auth)
 				rxsig  = snd(auth)
@@ -111,18 +112,17 @@ rule Client_recvAuth:
 	--[ SessKeyI(S, sk)
 		]->
 		[]
-*/
 
-/*
+
 axiom Eq:
 	"All x y #i. Eq(x, y) @i ==> x = y"
 
 axiom IsTrue:
 	"All x #i. True(x) @i ==> x = true"
-*/
 
 
-/*
+
+//explicit entity authentication
 lemma Client_auth:
   " /* For all session keys 'k' setup by clients with a server 'S' */
     ( All S k #i.  SessKeyI(S, k) @ #i
@@ -131,9 +131,8 @@ lemma Client_auth:
        ( (Ex #a. SessKeyR(S, k) @ a)
          /* or the adversary performed a long-term key reveal on 'S'
             before the key was setup. */
-       | (Ex #r. Reveal_ltk(S) @ r & r < i)
+       | (Ex #r. LtkReveal(S) @ r & r < i)
        )
     )
   "
-*/
 end
