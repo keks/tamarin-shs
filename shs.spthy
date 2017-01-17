@@ -71,9 +71,10 @@ rule Client_recvChal:
 	--[ True(macv(dhmac, dhS, h(<dhS^eph, $appKey>))) ]-> // according to spec
 	//--[ True(macv(dhmac, dhS, h($appKey))) ]-> // actual implementation diverges from spec
 		[ Client_authSent(A, S, dhS, eph, pkS, $appKey)
-		, Out(auth)
+//		, Out(auth)
 		]
 
+/*
 
 // server: recv client auth
 rule Server_recvAuth:
@@ -113,6 +114,7 @@ rule Client_recvAuth:
 		]->
 		[]
 
+*/
 
 axiom Eq:
 	"All x y #i. Eq(x, y) @i ==> x = y"
