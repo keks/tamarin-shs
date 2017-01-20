@@ -43,8 +43,10 @@ rule Client_sendChal:
 
 // send server challenge
 rule Server_recvChal:
-		let macKeyTx = h(<dhA^~eph, $appKey>)
-		//let macKey = h($appKey)<- this is the actual implementation
+		let
+			dhA = 'g'^X
+			macKeyTx = h(<dhA^~eph, $appKey>)
+			// macKey = h($appKey)<- this is the actual implementation
 			msgMac = mac('g'^~eph, macKeyTx)
 			macKeyRx = h($appKey)
 			rxMacOk = macv(dhmac, dhA, macKeyRx)
@@ -60,15 +62,20 @@ rule Server_recvChal:
 
 // send client auth
 rule Client_recvChal:
-		let eKey = h(<<$appKey, dhS^eph>, pkS^eph>)
-		    sigd = h(<<$appKey, pkS>, dhS^eph>)
-		    sig  = sign(sigd, ltkA)
-		    auth = senc(<'g'^ltkA, sig>, eKey)
+		let
+			dhS   = 'g'^X
+			pkS   = <pkSdh, pkSpk>
+			pkSdh = 'g'^Y
+			eKey  = h(<<$appKey, dhS^eph>, pkSdh^eph>)
+			sigd  = h(<<$appKey, pkS>, dhS^eph>)
+			sig   = sign(sigd, ltkA)
+			auth  = senc(<'g'^ltkA, sig>, eKey)
 		in
 		[	Client_chalSent(A, S, ltkA, eph, pkS, $appKey)
 		,	In(<dhS, dhmac>)
 		]
-	--[ True(macv(dhmac, dhS, h(<dhS^eph, $appKey>))) ]-> // according to spec
+	--[ True(macv(dhmac, dhS, h(<dhS^eph, $appKey>))) // according to spec
+	  , Reach() ]->
 	//--[ True(macv(dhmac, dhS, h($appKey))) ]-> // actual implementation diverges from spec
 		[ Client_authSent(A, S, dhS, eph, pkS, $appKey)
 //		, Out(auth)
@@ -122,7 +129,9 @@ axiom Eq:
 axiom IsTrue:
 	"All x #i. True(x) @i ==> x = true"
 
-
+lemma Reachable:
+  exists-trace
+  "Ex #i. Reach()@i & not (Ex X #j. LtkReveal(X) @j)"
 
 //explicit entity authentication
 lemma Client_auth:
