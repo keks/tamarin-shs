@@ -7,14 +7,20 @@ begin
 
 builtins: diffie-hellman, signing, symmetric-encryption
 
-functions: mac/2, macv/3, ed2cv/1, h/1
+functions: mac/2, macv/3, h/1, ed2cv/1, cv2ed/1
 
-equations: macv(mac(m, k), m, k) = true
+equations: macv(mac(m, k), m, k) = true //, cv2ed('g'^ltk) = pk(ltk)
+
+//ed2cv(pk(ltk)) = 'g'^ltk,
 
 rule Register_pk:
 		[ Fr(~ltk) ]
 	-->
-		[ !Ltk($A, ~ltk), !Pk($A, <'g'^~ltk, pk(~ltk)>) ]
+		[ !Ltk($A, ~ltk)
+		, !Pk($A, <'g'^~ltk, pk(~ltk)>)
+		 ]
+
+//, !PkLookup('g'^~ltk, pk(ltk))
 
 
 rule Get_pk:
@@ -32,11 +38,11 @@ rule Reveal_ltk:
 // send client challenge
 rule Client_sendChal:
 		[ Fr(~eph)
-		, !Ltk($A, ltkA)
+		, !Ltk($A, ~ltkA)
 		, !Pk($S, pkS)
 		]
 	-->
-		[ Client_chalSent($A, $S, ltkA, ~eph, pkS, $appKey)
+		[ Client_chalSent($A, $S, ~ltkA, ~eph, pkS, $appKey)
 		, Out(<'g'^~eph, mac('g'^~eph, h($appKey))>)
 		]
 
@@ -65,44 +71,46 @@ rule Client_recvChal:
 		let
 			dhS   = 'g'^X
 			pkS   = <pkSdh, pkSpk>
-			pkSdh = 'g'^Y
-			eKey  = h(<<$appKey, dhS^eph>, pkSdh^eph>)
-			sigd  = h(<<$appKey, pkS>, dhS^eph>)
-			sig   = sign(sigd, ltkA)
-			auth  = senc(<'g'^ltkA, sig>, eKey)
+			pkSdh = 'g'^~Y
+			eKey  = h(<$appKey, dhS^eph, pkSdh^eph>)
+			sigd  = h(<$appKey, pkS, dhS^eph>)
+			sig   = sign(sigd, ~ltkA)
+			auth  = senc(<pkA, sig>, eKey)
 		in
-		[	Client_chalSent(A, S, ltkA, eph, pkS, $appKey)
-		,	In(<dhS, dhmac>)
+		[	Client_chalSent(A, S, ~ltkA, eph, pkS, $appKey)
+		,	!Pk(A, pkA)
+		,	In(<dhS, mac(dhS, h(<dhS^eph, $appKey>))>)
+		//,	In(<dhS, mac(dhS, h($appKey))>) // actual implementation diverges from spec
 		]
-	--[ True(macv(dhmac, dhS, h(<dhS^eph, $appKey>))) // according to spec
-	  , Reach() ]->
-	//--[ True(macv(dhmac, dhS, h($appKey))) ]-> // actual implementation diverges from spec
+	--[ Reach() ]->
 		[ Client_authSent(A, S, dhS, eph, pkS, $appKey)
-//		, Out(auth)
+		, Out(auth)
 		]
 
-/*
 
 // server: recv client auth
 rule Server_recvAuth:
-		let	dKey = h(<<$appKey, fst(dhA)^eph>, fst(dhA)^ltk>)
-				auth = sdec(encAuth, dKey)
-				pkA  = fst(auth)
-				rxsig  = snd(auth)
-				rx   = h(<<$appKey, 'g'^ltk>,dhA^eph>)
-				sk   = h(<<$appKey, dhA^eph>,<fst(pkA)^eph, dhA^ltk>>)
-				sig  = sign(<<$appKey,auth>,fst(pkA)^ltk>, ltk)
+		let	dKey = h(<$appKey, dhA^eph, dhA^ltk>)
+				encAuth = senc(auth, dKey)
+				auth    = <pkA, rxsig>
+				pkA     = <pkAdh, pkAed>
+				dhA     = 'g'^X
+				pkAdh   = 'g'^Y
+				rx      = h(<$appKey, 'g'^ltk,dhA^eph>)
+				sk      = h(<$appKey, dhA^eph,pkAdh^eph, dhA^ltk>)
+				sig     = sign(<$appKey, auth, pkAdh^ltk>, ltk)
 		in
 		[ Server_chalSent(S, eph, dhA, $appKey)
 		, In(encAuth)
 		, !Ltk(S, ltk)
 		]
-	--[ True(verify(rx, rxsig, snd(pkA)))
+	--[ True(verify(rx, rxsig, pkAed))
 		,	SessKeyR(S, sk)
 		]->
-		[ Out(senc(sig, sk))
+		[ //Out(senc(sig, sk))
 		]
 
+/*
 
 // send client auth
 rule Client_recvAuth:
