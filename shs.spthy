@@ -70,66 +70,72 @@ rule Server_recvChal:
 rule Client_recvChal:
 		let
 			dhS   = 'g'^X
-			pkS   = <pkSdh, pkSpk>
 			pkSdh = 'g'^~Y
-			eKey  = h(<$appKey, dhS^eph, pkSdh^eph>)
-			sigd  = h(<$appKey, pkS, dhS^eph>)
+			pkS   = <pkSdh, pkSed>
+			eKey  = h(<$appKey, dhS^~eph, pkSdh^~eph>)
+			sigd  = h(<$appKey, pkS, h(dhS^~eph)>)
 			sig   = sign(sigd, ~ltkA)
-			auth  = senc(<pkA, sig>, eKey)
+			auth  = <pkA,sig>
+			encAuth  = senc(auth, eKey)
 		in
-		[	Client_chalSent(A, S, ~ltkA, eph, pkS, $appKey)
+		[	Client_chalSent(A, S, ~ltkA, ~eph, pkS, $appKey)
 		,	!Pk(A, pkA)
-		,	In(<dhS, mac(dhS, h(<dhS^eph, $appKey>))>)
+		,	In(<dhS, mac(dhS, h(<dhS^~eph, $appKey>))>)
 		//,	In(<dhS, mac(dhS, h($appKey))>) // actual implementation diverges from spec
 		]
-	--[ Reach() ]->
-		[ Client_authSent(A, S, dhS, eph, pkS, $appKey)
-		, Out(auth)
+	--[ ]->
+		[ Client_authSent(A, S, dhS, ~eph, pkS, $appKey, auth)
+		, Out(encAuth)
 		]
 
 
 // server: recv client auth
 rule Server_recvAuth:
-		let	dKey = h(<$appKey, dhA^eph, dhA^ltk>)
-				encAuth = senc(auth, dKey)
-				auth    = <pkA, rxsig>
-				pkA     = <pkAdh, pkAed>
-				dhA     = 'g'^X
-				pkAdh   = 'g'^Y
-				rx      = h(<$appKey, 'g'^ltk,dhA^eph>)
-				sk      = h(<$appKey, dhA^eph,pkAdh^eph, dhA^ltk>)
-				sig     = sign(<$appKey, auth, pkAdh^ltk>, ltk)
+		let
+			dhA     = 'g'^X
+			pkAdh   = 'g'^Y
+			dKey    = h(<$appKey, dhA^~eph, dhA^~ltk>)
+			pkA     = <pkAdh, pkAed>
+			auth    = <pkA, rxsig>
+			encAuth = senc(auth, dKey)
+			rx      = h(<$appKey, pkS, h(dhA^~eph)>)
+			sk      = h(<$appKey, dhA^~eph, pkAdh^~eph, dhA^~ltk>)
+			sig     = sign(<$appKey, auth, pkAdh^~ltk>, ~ltk)
 		in
-		[ Server_chalSent(S, eph, dhA, $appKey)
+		[ Server_chalSent(S, ~eph, dhA, $appKey)
 		, In(encAuth)
-		, !Ltk(S, ltk)
+		, !Ltk(S, ~ltk)
+		, !Pk(S, pkS)
 		]
-	--[ True(verify(rx, rxsig, pkAed))
-		,	SessKeyR(S, sk)
+	--[   True(verify(rx, rxsig, pkAed))
+		, SessKeyR(S, sk)
 		]->
-		[ //Out(senc(sig, sk))
+		[ Out(senc(sig, sk))
 		]
 
-/*
 
 // send client auth
 rule Client_recvAuth:
-		let	auth = sdec(encAuth, sk)
-				pkS  = fst(auth)
-				rxsig  = snd(auth)
-				hmsg   = h(<<$appKey, pkS>,dhS^eph>)
-				rx   = h(<<$appKey, hmsg>,h(fst(pkS)^ltk)>)
-				sk   = h(<<$appKey, dhS^eph>,<dhS^ltk, pkS^eph>>)
+		let
+			dhS     = 'g'^X
+			pkSdh   = 'g'^Y
+			pkS     = <pkSdh, pkSed>
+			auth    = <pkS, rxsig>
+			encAuth = senc(auth, sk)
+			//hmsg    = h(<$appKey, pkS, dhS^~eph>)
+			rx      = h(<$appKey, hmsg, h(pkSdh^~ltk)>)
+			sk      = h(<$appKey, dhS^~eph, dhS^~ltk, pkSdh^~eph>)
 		in
-		[	Client_authSent(A, S, dhS, eph, pkS, $appKey)
-		,	!Ltk(A, ltk)
+		[	Client_authSent(A, S, dhS, ~eph, pkS, $appKey, hmsg)
+		,	!Ltk(A, ~ltk)
 		,	In(encAuth)
 		]
-	--[ SessKeyI(S, sk)
+	--[   SessKeyI(S, sk)
+		, True(verify(rx, rxsig, pkSed))
+		, Reach() 
 		]->
 		[]
 
-*/
 
 axiom Eq:
 	"All x y #i. Eq(x, y) @i ==> x = y"
