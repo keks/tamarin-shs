@@ -41,7 +41,9 @@ rule Client_sendChal:
 		, !Ltk($A, ~ltkA)
 		, !Pk($S, pkS)
 		]
-	-->
+	--[
+		 Reach_ClientChal()
+	]->
 		[ Client_chalSent($A, $S, ~ltkA, ~eph, pkS, $appKey)
 		, Out(<'g'^~eph, mac('g'^~eph, h($appKey))>)
 		]
@@ -60,7 +62,8 @@ rule Server_recvChal:
 		[ Fr(~eph)
 		, In(<dhA, dhmac>)
 		]
-	--[ True(rxMacOk) ]->
+	--[  Reach_ServerChal()
+		,True(rxMacOk) ]->
 		[ Server_chalSent($S, ~eph, dhA, $appKey)
 		, Out(<'g'^~eph, msgMac>)
 		]
@@ -83,7 +86,7 @@ rule Client_recvChal:
 		,	In(<dhS, mac(dhS, h(<dhS^~eph, $appKey>))>)
 		//,	In(<dhS, mac(dhS, h($appKey))>) // actual implementation diverges from spec
 		]
-	--[ ]->
+	--[ Reach_ClientAuth() ]->
 		[ Client_authSent(A, S, dhS, ~eph, pkS, $appKey, auth)
 		, Out(encAuth)
 		]
@@ -109,6 +112,7 @@ rule Server_recvAuth:
 		]
 	--[   True(verify(rx, rxsig, pkAed))
 		, SessKeyR(S, sk)
+		, Reach_ServerAuth()
 		]->
 		[ Out(senc(sig, sk))
 		]
@@ -132,7 +136,7 @@ rule Client_recvAuth:
 		]
 	--[   SessKeyI(S, sk)
 		, True(verify(rx, rxsig, pkSed))
-		, Reach() 
+		, Reach()
 		]->
 		[]
 
@@ -142,6 +146,22 @@ axiom Eq:
 
 axiom IsTrue:
 	"All x #i. True(x) @i ==> x = true"
+
+lemma Sent_ClientChal:
+	exists-trace
+	"Ex #i. Reach_ClientChal()@i & not (Ex X #j. LtkReveal(X) @j)"
+
+lemma Sent_ServerChal:
+	exists-trace
+	"Ex #i. Reach_ServerChal()@i & not (Ex X #j. LtkReveal(X) @j)"
+
+lemma Sent_ClientAuth:
+	exists-trace
+	"Ex #i. Reach_ClientAuth()@i & not (Ex X #j. LtkReveal(X) @j)"
+
+lemma Sent_ServerAuth:
+	exists-trace
+	"Ex #i. Reach_ServerAuth()@i & not (Ex X #j. LtkReveal(X) @j)"
 
 lemma Reachable:
   exists-trace
