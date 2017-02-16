@@ -16,129 +16,174 @@ equations: macv(mac(m, k), m, k) = true //, cv2ed('g'^ltk) = pk(ltk)
 rule Register_pk:
 		[ Fr(~ltk) ]
 	-->
-		[ !Ltk($A, ~ltk)
-		, !Pk($A, <'g'^~ltk, pk(~ltk)>)
+		[ !Ltk($I, ~ltk)
+		, !Pk($I, <'g'^~ltk, pk(~ltk)>)
 		 ]
 
 //, !PkLookup('g'^~ltk, pk(ltk))
 
 
 rule Get_pk:
-		[ !Pk(A, pk) ]
+		[ !Pk(I, pk) ]
 	-->
 		[ Out(pk) ]
 
 
 rule Reveal_ltk:
-		[ !Ltk(A, ltk) ]
-	--[ LtkReveal(A) ]->
+		[ !Ltk(I, ltk) ]
+	--[ LtkReveal(I) ]->
 		[ Out(ltk) ]
 
 
 // send client challenge
-rule Client_sendChal:
+rule Initiator_sendChal:
+	let
+		pkI = <'g'^~ltkI, pk(~ltkI)>
+	in
 		[ Fr(~eph)
-		, !Ltk($A, ~ltkA)
-		, !Pk($S, pkS)
+		, !Ltk($I, ~ltkI)
+		, !Pk($R, pkR)
 		]
 	--[
-		 Reach_ClientChal()
+		 Reach_InitiatorChal()
 	]->
-		[ Client_chalSent($A, $S, ~ltkA, ~eph, pkS, $appKey)
+		[ Initiator_chalSent($I, $R, ~ltkI, ~eph, pkR, pkI, $appKey)
 		, Out(<'g'^~eph, mac('g'^~eph, h($appKey))>)
 		]
 
 
 // send server challenge
-rule Server_recvChal:
+rule Responder_recvChal:
 		let
-			dhA = 'g'^X
-			macKeyTx = h(<dhA^~eph, $appKey>)
+			dhI = 'g'^X
+			macKeyTx = h(<dhI^~eph, $appKey>)
 			// macKey = h($appKey)<- this is the actual implementation
 			msgMac = mac('g'^~eph, macKeyTx)
 			macKeyRx = h($appKey)
-			rxMacOk = macv(dhmac, dhA, macKeyRx)
+			//rxMacOk = macv(dhmac, dhI, macKeyRx)
 		in
 		[ Fr(~eph)
-		, In(<dhA, dhmac>)
+		, In(<dhI, mac(dhI, macKeyRx)>)
 		]
-	--[  Reach_ServerChal()
-		,True(rxMacOk) ]->
-		[ Server_chalSent($S, ~eph, dhA, $appKey)
+	--[  Reach_ResponderChal()
+	//	,True(rxMacOk)
+	]->
+		[ Responder_chalSent($R, ~eph, dhI, $appKey)
 		, Out(<'g'^~eph, msgMac>)
 		]
 
 
 // send client auth
-rule Client_recvChal:
+rule Initiator_recvChal:
 		let
-			dhS   = 'g'^X
-			pkSdh = 'g'^~Y
-			pkS   = <pkSdh, pkSed>
-			eKey  = h(<$appKey, dhS^~eph, pkSdh^~eph>)
-			sigd  = h(<$appKey, pkS, h(dhS^~eph)>)
-			sig   = sign(sigd, ~ltkA)
-			auth  = <pkA,sig>
-			encAuth  = senc(auth, eKey)
+			dhR   = 'g'^X
+			pkRdh = 'g'^~Y
+			pkR   = <pkRdh, pkRed>
+			ir    = dhR^~eph
+			iR    = pkRdh^~eph
+			sigd  = h(<$appKey, pkR, h(ir)>)
+			sig   = sign(sigd, ltkI)
+			iAuth  = <pkI,sig> //  == H
+			eKey  = h(<$appKey, ir, iR>)
+			iEncAuth  = senc(iAuth, eKey)
 		in
-		[	Client_chalSent(A, S, ~ltkA, ~eph, pkS, $appKey)
-		,	!Pk(A, pkA)
-		,	In(<dhS, mac(dhS, h(<dhS^~eph, $appKey>))>)
-		//,	In(<dhS, mac(dhS, h($appKey))>) // actual implementation diverges from spec
+		[	Initiator_chalSent(I, R, ltkI, ~eph, pkR, pkI, $appKey)
+		,	In(<dhR, mac(dhR, h(<ir, $appKey>))>)
+		//,	In(<dhR, mac(dhR, h($appKey))>) // actual implementation diverges from spec
 		]
-	--[ Reach_ClientAuth() ]->
-		[ Client_authSent(A, S, dhS, ~eph, pkS, $appKey, auth)
-		, Out(encAuth)
+	--[ Reach_InitiatorAuth() ]->
+		[ Initiator_authSent(I, R, ltkI, ~eph, dhR, pkR, $appKey, iAuth)
+		, Out(iEncAuth)
 		]
 
 
 // server: recv client auth
-rule Server_recvAuth:
-		let
-			dhA     = 'g'^X
-			pkAdh   = 'g'^Y
-			dKey    = h(<$appKey, dhA^~eph, dhA^~ltk>)
-			pkA     = <pkAdh, pkAed>
-			auth    = <pkA, rxsig>
-			encAuth = senc(auth, dKey)
-			rx      = h(<$appKey, pkS, h(dhA^~eph)>)
-			sk      = h(<$appKey, dhA^~eph, pkAdh^~eph, dhA^~ltk>)
-			sig     = sign(<$appKey, auth, pkAdh^~ltk>, ~ltk)
-		in
-		[ Server_chalSent(S, ~eph, dhA, $appKey)
-		, In(encAuth)
-		, !Ltk(S, ~ltk)
-		, !Pk(S, pkS)
-		]
-	--[   True(verify(rx, rxsig, pkAed))
-		, SessKeyR(S, sk)
-		, Reach_ServerAuth()
-		]->
-		[ Out(senc(sig, sk))
-		]
+rule Responder_recvAuth:
+	let
+		pkRdh   = 'g'^~eph
+		pkRed   = pk(~eph)
+		pkR     = <pkRdh, pkRed>
+		dhI     = 'g'^X
+		pkIdh   = 'g'^Y
+		iR      = dhI^~ltk
+		ir      = dhI^~eph
+		dKey    = h(<$appKey, ir, iR>)
+		pkI     = <pkIdh, pkIed>
+		Ir      = pkIdh^~eph 
+		IR      = pkIdh^~ltk
+		auth    = <pkI, rxsig>
+		encAuth = senc(auth, dKey)
+		rx      = h(<$appKey, pkR, h(ir)>)
+		sk      = h(<$appKey, ir, Ir, iR>)
+		sig     = sign(<$appKey, auth, h(ir)>, ~ltk)
+	in
+	[
+	  Responder_chalSent(R, ~eph, dhI, $appKey),
+	  In(encAuth),
+	  !Ltk(R, ~ltk)
+	]
+	--[
+	  True(verify(rx, rxsig, pkIed)),
+	  SessKeyR(R, sk),
+	  Reach_ResponderAuth()
+	]->
+	[
+	  Out(senc(sig, sk))
+	]
 
-
-// send client auth
-rule Client_recvAuth:
+/*
 		let
-			dhS     = 'g'^X
-			pkSdh   = 'g'^Y
-			pkS     = <pkSdh, pkSed>
-			auth    = <pkS, rxsig>
-			encAuth = senc(auth, sk)
-			//hmsg    = h(<$appKey, pkS, dhS^~eph>)
-			rx      = h(<$appKey, hmsg, h(pkSdh^~ltk)>)
-			sk      = h(<$appKey, dhS^~eph, dhS^~ltk, pkSdh^~eph>)
+			dKey    = h(<$appKey, ir, iR>)
+			iAuth   = sdec(iEncAuth, dKey)
+			pkI     = fst(iAuth)
+			rxsig   = snd(iAuth)
+			pkIdh   = fst(pkI)
+			pkIed   = snd(pkI)
+			Ir      = pkIdh^~eph 
+			rx      = h(<$appKey, pkR, h(ir)>)
+			sk      = h(<$appKey, ir, Ir, iR>)
+			sig     = sign(<$appKey, iAuth, Ir>, ~ltk)
 		in
-		[	Client_authSent(A, S, dhS, ~eph, pkS, $appKey, hmsg)
-		,	!Ltk(A, ~ltk)
-		,	In(encAuth)
+		[ Responder_chalSent(R, ~eph, dhI, $appKey)
+		, In(iEncAuth)
+		, !Ltk(R, ~ltk)
+		, !Pk(R, pkR)
 		]
-	--[   SessKeyI(S, sk)
-		, True(verify(rx, rxsig, pkSed))
-		, Reach()
+	--[  True(verify(rx, rxsig, pkIed)),
+		 SessKeyR(R, sk)
+		, Reach_ResponderAuth()
 		]->
-		[]
+		[  ]
+*/
+
+// client recv server auth
+rule Initiator_recvAuth:
+	let
+		dhR     = 'g'^X
+		pkRdh   = 'g'^Y
+		pkR     = <pkRdh, pkRed>
+		pkIdh   = 'g'^~eph
+		pkIed   = pk(~eph)
+		pkI     = <pkIdh, pkIed>
+		ri      = dhR^~eph
+		Ri      = pkRdh^~eph
+		rI      = dhR^~ltk
+		auth    = <pkR, rxsig>
+		//hmsg    = h(<$appKey, pkR, ri>)
+		rx      = h(<$appKey, hmsg, h(ri)>)
+		sk      = h(<$appKey, ri, rI, Ri>)
+		encAuth = senc(auth, sk)
+	in
+	[
+	  Initiator_authSent(I, R, ~ltk, ~eph, dhR, pkR, $appKey, hmsg),
+	  In(encAuth)
+	]
+	--[
+	  SessKeyI(R, sk),
+	  True(verify(rx, rxsig, pkRed)),
+	  Reach()
+	]->
+	[]
 
 
 axiom Eq:
@@ -147,36 +192,36 @@ axiom Eq:
 axiom IsTrue:
 	"All x #i. True(x) @i ==> x = true"
 
-lemma Sent_ClientChal:
+lemma Sent_InitiatorChal:
 	exists-trace
-	"Ex #i. Reach_ClientChal()@i & not (Ex X #j. LtkReveal(X) @j)"
+	"Ex #i. Reach_InitiatorChal()@i & not (Ex X #j. LtkReveal(X) @j)"
 
-lemma Sent_ServerChal:
+lemma Sent_ResponderChal:
 	exists-trace
-	"Ex #i. Reach_ServerChal()@i & not (Ex X #j. LtkReveal(X) @j)"
+	"Ex #i. Reach_ResponderChal()@i & not (Ex X #j. LtkReveal(X) @j)"
 
-lemma Sent_ClientAuth:
+lemma Sent_InitiatorAuth:
 	exists-trace
-	"Ex #i. Reach_ClientAuth()@i & not (Ex X #j. LtkReveal(X) @j)"
+	"Ex #i. Reach_InitiatorAuth()@i & not (Ex X #j. LtkReveal(X) @j)"
 
-lemma Sent_ServerAuth:
+lemma Sent_ResponderAuth:
 	exists-trace
-	"Ex #i. Reach_ServerAuth()@i & not (Ex X #j. LtkReveal(X) @j)"
+	"Ex #i. Reach_ResponderAuth()@i & not (Ex X #j. LtkReveal(X) @j)"
 
 lemma Reachable:
   exists-trace
   "Ex #i. Reach()@i & not (Ex X #j. LtkReveal(X) @j)"
 
 //explicit entity authentication
-lemma Client_auth:
-  " /* For all session keys 'k' setup by clients with a server 'S' */
-    ( All S k #i.  SessKeyI(S, k) @ #i
+lemma Initiator_auth:
+  " /* For all session keys 'k' setup by clients with a server 'R' */
+    ( All R k #i.  SessKeyI(R, k) @ #i
        ==>
          /* there is a server that answered the request */
-       ( (Ex #a. SessKeyR(S, k) @ a)
-         /* or the adversary performed a long-term key reveal on 'S'
+       ( (Ex #a. SessKeyR(R, k) @ a)
+         /* or the adversary performed a long-term key reveal on 'R'
             before the key was setup. */
-       | (Ex #r. LtkReveal(S) @ r & r < i)
+       | (Ex #r. LtkReveal(R) @ r & r < i)
        )
     )
   "
