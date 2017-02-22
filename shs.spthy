@@ -7,11 +7,7 @@ begin
 
 builtins: diffie-hellman, signing, symmetric-encryption
 
-functions: mac/2, macv/3, h/1, ed2cv/1, cv2ed/1
-
-equations: macv(mac(m, k), m, k) = true //, cv2ed('g'^ltk) = pk(ltk)
-
-//ed2cv(pk(ltk)) = 'g'^ltk,
+functions: mac/2, h/1
 
 rule Register_pk:
 		[ Fr(~ltk) ]
