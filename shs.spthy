@@ -62,7 +62,6 @@ rule Responder_recvChal:
 		, Out(<'g'^~eph, msgMac>)
 		]
 
-
 // send client auth
 rule Initiator_recvChal:
 		let
@@ -94,26 +93,27 @@ rule Responder_recvAuth:
 		pkRed   = pk(~eph)
 		pkR     = <pkRdh, pkRed>
 		dhI     = 'g'^X
-		pkIdh   = 'g'^Y
-		iR      = dhI^~ltk
+		pkIdh   = 'g'^ltkI // this is ok due to pattern matching
+		pkIed   = pk(ltkI) // but only for verifying stuff
+		iR      = dhI^~ltkR
 		ir      = dhI^~eph
 		dKey    = h(<$appKey, ir, iR>)
 		pkI     = <pkIdh, pkIed>
 		Ir      = pkIdh^~eph 
-		IR      = pkIdh^~ltk
-		auth    = <pkI, rxsig>
+		IR      = pkIdh^~ltkR
+		rxSigd  = h(<$appKey, pkR, h(ir)>)
+		rxSig   = sign(rxSigd, ltkI) // we only use this signatur in pattern matching, we don't send it
+		auth    = <pkI, rxSig>
 		encAuth = senc(auth, dKey)
-		rx      = h(<$appKey, pkR, h(ir)>)
 		sk      = h(<$appKey, ir, Ir, iR>)
-		sig     = sign(<$appKey, auth, h(ir)>, ~ltk)
+		sig     = sign(<$appKey, auth, h(ir)>, ~ltkR)
 	in
 	[
 	  Responder_chalSent(R, ~eph, dhI, $appKey),
 	  In(encAuth),
-	  !Ltk(R, ~ltk)
+	  !Ltk(R, ~ltkR)
 	]
 	--[
-	  True(verify(rx, rxsig, pkIed)),
 	  SessKeyR(R, sk),
 	  Reach_ResponderAuth()
 	]->
@@ -150,7 +150,8 @@ rule Responder_recvAuth:
 rule Initiator_recvAuth:
 	let
 		dhR     = 'g'^X
-		pkRdh   = 'g'^Y
+		pkRdh   = 'g'^ltkR
+		pkRed   = pk(ltkR)
 		pkR     = <pkRdh, pkRed>
 		pkIdh   = 'g'^~eph
 		pkIed   = pk(~eph)
@@ -158,9 +159,10 @@ rule Initiator_recvAuth:
 		ri      = dhR^~eph
 		Ri      = pkRdh^~eph
 		rI      = dhR^~ltk
-		auth    = <pkR, rxsig>
 		//hmsg    = h(<$appKey, pkR, ri>)
-		rx      = h(<$appKey, hmsg, h(ri)>)
+		rxSigd  = h(<$appKey, hmsg, h(ir)>)
+		rxSig   = sign(rxSigd, ltkR) // we only use this signatur in pattern matching, we don't send it
+		auth    = <pkR, rxSig>
 		sk      = h(<$appKey, ri, rI, Ri>)
 		encAuth = senc(auth, sk)
 	in
@@ -170,7 +172,6 @@ rule Initiator_recvAuth:
 	]
 	--[
 	  SessKeyI(R, sk),
-	  True(verify(rx, rxsig, pkRed)),
 	  Reach()
 	]->
 	[]
