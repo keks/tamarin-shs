@@ -16,9 +16,6 @@ rule Register_pk:
 		, !Pk($I, <'g'^~ltk, pk(~ltk)>)
 		 ]
 
-//, !PkLookup('g'^~ltk, pk(ltk))
-
-
 rule Get_pk:
 		[ !Pk(I, pk) ]
 	-->
@@ -47,22 +44,19 @@ rule Initiator_sendChal:
 		, Out(<'g'^~eph, mac('g'^~eph, h($appKey))>)
 		]
 
-
 // send server challenge
 rule Responder_recvChal:
 		let
 			dhI = 'g'^X
 			macKeyTx = h(<dhI^~eph, $appKey>)
-			// macKey = h($appKey)<- this is the actual implementation
+			// macKeyTx = h($appKey)<- this is the actual implementation
 			msgMac = mac('g'^~eph, macKeyTx)
 			macKeyRx = h($appKey)
-			//rxMacOk = macv(dhmac, dhI, macKeyRx)
 		in
 		[ Fr(~eph)
 		, In(<dhI, mac(dhI, macKeyRx)>)
 		]
 	--[  Reach_ResponderChal()
-	//	,True(rxMacOk)
 	]->
 		[ Responder_chalSent($R, ~eph, dhI, $appKey)
 		, Out(<'g'^~eph, msgMac>)
