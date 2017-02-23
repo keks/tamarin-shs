@@ -101,8 +101,8 @@ rule Responder_recvAuth:
 		pkI     = <pkIdh, pkIed>
 		Ir      = pkIdh^~eph 
 		IR      = pkIdh^~ltkR
-		rxSigd  = h(<$appKey, pkR, h(ir)>)
-		rxSig   = sign(rxSigd, ltkI) // we only use this signatur in pattern matching, we don't send it
+		//rxSigd  = h(<$appKey, pkR, h(ir)>)
+		//rxSig   = sign(rxSigd, ltkI) // we only use this signatur in pattern matching, we don't send it
 		auth    = <pkI, rxSig>
 		encAuth = senc(auth, dKey)
 		sk      = h(<$appKey, ir, Ir, iR>)
