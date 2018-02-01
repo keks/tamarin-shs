@@ -1,0 +1,459 @@
+/*
+How secure is secret handshake?
+*/
+
+theory SHS_ng
+begin
+
+builtins: diffie-hellman, signing, symmetric-encryption
+
+functions: mac/2, h/1
+
+rule Random:
+  [
+    Fr(~eph),
+    !Agent(pkA, ltkA)
+  ]
+  --[ MkRand(pkA, ~eph) ]->
+  [ Rand(pkA, ~eph) ]
+
+rule NewProto:
+  [ Fr(~protoKey) ] --[ NewProto(~protoKey) ]-> [ !Proto(~protoKey), Out(~protoKey) ]
+
+rule NewAgent:
+  let
+    pkDH   = 'g'^~ltk
+    pkSign = pk(~ltk)
+    pk     = <pkDH, pkSign>
+  in
+  [ Fr(~ltk) ]
+  --[
+    IsAgent(pk),
+    AgentPubkey(pk, pkDH, pkSign),
+    WithLtk(~ltk),
+    HasCapability(pk, pk)
+  ]->
+  [
+    !Agent(pk, ~ltk),
+    !Capability(pk, pk)
+  ]
+
+rule Delegate:
+  [
+    !Capability(pkDelegator, pkR),
+    !Agent(pkDelegatee, ~ltk)
+  ]
+  --[
+    HasCapability(pkDelegatee, pkR),
+    Delegator(pkDelegator)
+  ]->
+  [ !Capability(pkDelegatee, pkR) ]
+
+rule RevealPubkey:
+  [ !Agent(pk, ~ltk) ]
+  --[ RevealPublicKey(pk) ]->
+  [ Out(pk) ]
+
+rule RevealSessionKey:
+  [ SessionKey(~sid, sk) ]
+  --[ RevealSessionKey(sk) ]->
+  [ Out(sk) ]
+
+rule Corrupt_ltk:
+  [
+    !Agent(pkA, ltkA)
+   ]
+  --[ LtkCorrupt(pkA) ]->
+  [ Out(ltkA) ]
+
+rule Dial:
+  [
+    !Agent(pkI, ~ltkI),
+    !Capability(pkI, pkR),
+    !Proto(~protoKey),
+    Rand(pkI, ~ephI),
+    Fr(~sid)
+  ]
+  --[
+    SessionRole(~sid, 'I'),
+    SessionInitiator(~sid, pkI),
+    SessionResponder(~sid, pkR),
+    SessionEphInitiator(~sid, 'g'^~ephI),
+    SessionProtoKey(~sid, ~protoKey),
+    SessionLocal(~sid, pkI),
+    SessionPeer(~sid, pkR)
+  ]->
+  [ Initiator(pkI, pkR, ~ltkI, ~ephI, ~protoKey, ~sid) ]
+
+rule Listen:
+  [
+    !Agent(pkR, ~ltkR),
+    !Proto(~protoKey),
+    Rand(pkR, ~ephR),
+    Fr(~sid)
+  ]
+  --[
+    SessionRole(~sid, 'R'),
+    SessionResponder(~sid, pkR),
+    SessionEphResponder(~sid, 'g'^~ephR),
+    SessionProtoKey(~sid, ~protoKey),
+    SessionLocal(~sid, pkR)
+  ]->
+  [ ResponderListen(pkR, ~ltkR, ~ephR, ~protoKey, ~sid) ]
+
+// send client challenge
+rule Initiator_sendChal:
+  let
+    dhI = 'g'^~ephI  
+    keyMac = mac(dhI, h(~protoKey))
+    tx = <dhI, keyMac>
+  in
+  [
+    Initiator(pkI, pkR, ~ltkI, ~ephI, ~protoKey, ~sid)
+  ]
+  --[
+    SessionID(~sid),
+
+    // helpful when looking at trace pictures
+    DHPubkey(fst(pkI)),
+    DHPubkey(fst(pkR)),
+    DHPubkey(dhI)
+  ]->
+  [
+    Initiator_chalSent(pkI, pkR, ~ltkI, ~ephI, ~protoKey, ~sid),
+    Out(tx)
+  ]
+
+// send server challenge
+rule Responder_recvChal:
+  let
+    dhI = 'g'^ephI
+    dhR = 'g'^~ephR
+    pkR = <'g'^~ltkR, pk(~ltkR)>
+    macKeyTx = h(<dhI^~ephR, ~protoKey>)
+    // macKeyTx = h(~protoKey)<- this is the actual implementation
+    msgMac = mac('g'^~ephR, macKeyTx)
+    macKeyRx = h(~protoKey)
+    rx = <dhI, mac(dhI, macKeyRx)>
+    tx = <dhR, msgMac>
+  in
+  [
+    ResponderListen(pkR, ~ltkR, ~ephR, ~protoKey, ~sid),
+    In(rx)
+  ]
+  --[ 
+    SessionID(~sid),
+    SessionEphInitiator(~sid, dhI),
+
+    // helpful when looking at trace pictures
+    DHPubkey(fst(pkR)),
+    DHPubkey(dhI),
+    DHPubkey(dhR)
+  ]->
+  [
+    Responder_chalSent(~ltkR, ~ephR, dhI, ~protoKey, ~sid),
+    Out(tx)
+  ]
+
+// send client auth
+rule Initiator_recvChal:
+  let
+    dhI   = 'g'^~ephI
+    dhR   = 'g'^ephR
+    pkRdh = 'g'^~ltkR
+    pkR   = <pkRdh, pkRed>
+    pkI   = <pkIdh, pkIed>
+
+    ir    = dhR^~ephI
+    iR    = pkRdh^~ephI
+    Ir    = dhR^~ltkI
+
+    sk      = h(<~protoKey, ir, Ir, iR>) // this will be the final secret, but it's not authenticated yet
+
+    sigd  = <~protoKey, pkR, h(ir)>
+    sig   = sign(sigd, ~ltkI)
+    iAuth = <pkI,sig> //  == H
+    eKey  = h(<~protoKey, ir, iR>)
+    iEncAuth  = senc(iAuth, eKey)
+
+    rx = <dhR, mac(dhR, h(<ir, ~protoKey>))> // according to spec
+    // rx = <dhR, mac(dhR, h(~protoKey))> // actual implementation diverges from spec
+  in
+  [
+    Initiator_chalSent(pkI, pkR, ~ltkI, ~ephI, ~protoKey, ~sid),
+    In(rx)
+  ]
+  --[
+    SessionID(~sid),
+    SessionEphResponder(~sid, dhR),
+    SessionKey(~sid, sk),
+    SessionAll(~sid, 'I', pkI, pkR, dhI, dhR, sk, ~protoKey),
+    SessionAgreementSet(~sid, 'I', pkI, pkR, sk, ~protoKey),
+
+    // helpful for looking at trace pictures
+    DHPubkey(fst(pkI)),
+    DHPubkey(fst(pkR)),
+    DHPubkey(dhI),
+    DHPubkey(dhR)
+  ]->
+  [
+    Initiator_authSent(pkI, pkR, ~ltkI, ~ephI, dhR, ~protoKey, ~sid),
+    SessionKey(~sid, sk),
+    Out(iEncAuth)
+  ]
+
+// server: recv client auth
+rule Responder_recvAuth:
+  let
+    pkRdh   = 'g'^~ltkR
+    pkRed   = pk(~ltkR)
+    dhR     = 'g'^~ephR
+    pkR     = <pkRdh, pkRed>
+
+    pkIdh   = 'g'^ltkI // this is ok due to pattern matching
+    pkIed   = pk(ltkI) // but only for verifying stuff
+    dhI     = 'g'^ephI
+    pkI     = <pkIdh, pkIed>
+
+    ir      = dhI^~ephR
+    iR      = dhI^~ltkR
+    Ir      = pkIdh^~ephR
+
+    dKey    = h(<~protoKey, ir, iR>)
+    sk      = h(<~protoKey, ir, Ir, iR>)
+
+    rxSigd  = <~protoKey, pkR, h(ir)>
+    rxSig   = sign(rxSigd, ltkI) // we only use this signature in pattern matching, we don't send it
+    auth    = <pkI, rxSig> // =H
+
+    sig     = sign(<~protoKey, auth, h(ir)>, ~ltkR)
+
+    rx      = senc(auth, dKey)
+    tx      = senc(sig, sk)
+  in
+  [
+    Responder_chalSent(~ltkR, ~ephR, dhI, ~protoKey, ~sid),
+    In(rx)
+  ]
+  --[
+    SessionID(~sid),
+    SessionInitiator(~sid, pkI),
+    SessionKey(~sid, sk),
+    SessionAll(~sid, 'R', pkI, pkR, dhI, dhR, sk, ~protoKey),
+    SessionAccept(~sid),
+    SessionAgreementSet(~sid, 'R', pkI, pkR, sk, ~protoKey),
+    SessionPeer(~sid, pkI),
+
+    // helpful for looking at trace pictures
+    DHPubkey(fst(pkI)),
+    DHPubkey(fst(pkR)),
+    DHPubkey(dhI),
+    DHPubkey(dhR)
+  ]->
+  [
+    Out(tx),
+    SessionKey(~sid, sk)
+  ]
+
+// client recv server auth
+rule Initiator_recvAuth:
+  let
+    dhI     = 'g'^~ephI
+    dhR     = 'g'^ephR
+    pkRdh   = 'g'^ltkR
+    pkRed   = pk(ltkR)
+    pkR     = <pkRdh, pkRed>
+    pkIdh   = 'g'^~ltkI
+    pkIed   = pk(~ltkI)
+    pkI     = <pkIdh, pkIed>
+    ir      = dhR^~ephI
+    iR      = pkRdh^~ephI
+    Ir      = dhR^~ltkI
+    hmsg    = <pkI, sign(<~protoKey, pkR, h(ir)>, ~ltkI)>
+    rxSigd  = <~protoKey, hmsg, h(ir)>
+    rxSig   = sign(rxSigd, ltkR) // we only use this signatur in pattern matching, we don't send it
+    sk      = h(<~protoKey, ir, Ir, iR>)
+    encAuth = senc(rxSig, sk)
+  in
+  [
+    Initiator_authSent(pkI, pkR, ~ltkI, ~ephI, dhR, ~protoKey, ~sid),
+    In(encAuth)
+  ]
+  --[
+    SessionID(~sid),
+    SessionAccept(~sid),
+
+    // helpful for looking at trace pictures
+    DHPubkey(fst(pkI)),
+    DHPubkey(fst(pkR)),
+    DHPubkey(dhI),
+    DHPubkey(dhR)
+  ]->
+  [ ]
+
+//
+// Agreement lemmas
+//
+
+
+lemma auth_explicit:
+"All sid role pkI pkR k protoKeyR pkRemote #set #accept #remote #mkRemote.
+    SessionAgreementSet(sid, role, pkI, pkR, k, protoKeyR) @ #set &
+    SessionAccept(sid)                            @ #accept &
+    SessionPeer(sid, pkRemote) @ #remote &
+    IsAgent(pkRemote) @ #mkRemote &
+    (not Ex #c. LtkCorrupt(pkRemote) @ #c)
+  ==>
+    Ex sid2 role2 #set2. (
+      SessionAgreementSet(sid2, role2, pkI, pkR, k, protoKeyR) @ #set2 &
+      not role = role2
+    )"
+
+/* the lemma above should be equivalent, just removed some parens
+lemma auth_explicit:
+  "(
+    All sid role pkI pkR k protoKeyR pkRemote #set #accept #remote #mkRemote. (
+      SessionAgreementSet(sid, role, pkI, pkR, k, protoKeyR) @ #set &
+      SessionAccept(sid)                            @ #accept &
+      SessionPeer(sid, pkRemote) @ #remote &
+      IsAgent(pkRemote) @ #mkRemote &
+      (not Ex #c. LtkCorrupt(pkRemote) @ #c)
+    ) ==> (
+      Ex sid2 role2 #set2. (
+        SessionAgreementSet(sid2, role2, pkI, pkR, k, protoKeyR) @ #set2 &
+        not role = role2
+      )
+    )
+  )"
+*/
+
+lemma cpa_resistance:
+"All k sid1 sid2 #secret1 #secret2 #acc1 #acc2.
+  SessionAccept(sid1) @ acc1 &
+  SessionAccept(sid2) @ acc2 &
+  SessionKey(sid1, k) @ #secret1 &
+  SessionKey(sid2, k) @ #secret2
+  ==>
+  Ex protoKey #proto1 #proto2.
+    SessionProtoKey(sid1, protoKey) @ #proto1 &
+    SessionProtoKey(sid2, protoKey) @ #proto2"
+
+//
+// Secrecy lemmas
+//
+
+lemma secrecy_sessionkey:
+"All sid k pkPeer #accept #peer #secret.
+  SessionAccept(sid)       @ #accept &
+  SessionKey(sid, k)    @ #secret &
+  SessionPeer(sid, pkPeer) @ #peer &
+  (Ex #mk. IsAgent(pkPeer) @ #mk) &
+  not (Ex #c. LtkCorrupt(pkPeer) @ #c & #c < #accept) &
+  not (Ex #r. RevealSessionKey(k) @ #r)
+  ==>
+  not Ex #kk. !KU(k) @ #kk"
+
+lemma secrecy_capabilities:
+"All pk pkDH pkSign #mk.
+  IsAgent(pk) @ #mk &
+  AgentPubkey(pk, pkDH, pkSign) @ #mk &
+  not (Ex #c. LtkCorrupt(pk) @ #c) &
+  not (Ex #r. RevealPublicKey(pk) @ #r) &
+  not ( // pk dialed someone whose ltk got corrupted
+      Ex isid pkR k2 #dial #gotsecret. (
+        SessionRole(isid, 'I')      @ #dial &
+        SessionInitiator(isid, pk) @ #dial &
+        SessionResponder(isid, pkR)  @ #dial &
+
+        SessionKey(isid, k2) @ #gotsecret &
+
+        ( // not an agent, or an agent whose ltk got corrupted
+          All #mk. IsAgent(pkR) @ #mk
+            ==> 
+          Ex #corr. LtkCorrupt(pkR) @ #corr
+        )
+      )
+    )
+  ==>
+  not (Ex #kpkDH. !KU(pkDH) @ #kpkDH) &
+  not (Ex #kpkSign. !KU(pkSign) @ #kpkSign)"
+
+//
+// Other lemmas
+//
+
+lemma uniqueness:
+"All k sid1 sid2 sid3 #acc1 #acc2 #acc3 #sec1 #sec2 #sec3.
+  SessionAccept(sid1) @ #acc1 &
+  SessionAccept(sid2) @ #acc2 &
+  SessionAccept(sid3) @ #acc3 &
+  SessionKey(sid1, k) @ #sec1 &
+  SessionKey(sid2, k) @ #sec2 &
+  SessionKey(sid3, k) @ #sec3
+  ==>
+  ((sid1 = sid2) | (sid1 = sid3) | (sid2 = sid3))"
+
+
+lemma caps_pubkey:
+"All pk pkI pkDH pkSign sid1 k #mk #acc1 #init #resp1 #role1 #sec1.
+  AgentPubkey(pk, pkDH, pkSign) @ #mk &
+  not (Ex #kpk. !KU(pkSign) @ #kpk) &
+  not (Ex #kpk. !KU(pkDH) @ #kpk) &
+  SessionAccept(sid1) @ #acc1 &
+  SessionResponder(sid1, pk) @ #resp1 &
+  SessionInitiator(sid1, pkI) @ #init &
+  SessionRole(sid1, 'R') @ #role1 &
+  SessionKey(sid1, k) @ #sec1
+  ==> (
+    (Ex sid2 #role2 #sec2 #t.
+      SessionRole(sid2, 'I')     @ #role2 &
+      SessionKey(sid2, k)        @ #sec2 &
+      HasCapability(pkI, pk) @ #t &
+      (All #ku. !KU(k) @ #ku ==> (Ex #r. RevealSessionKey(k) @ #r))
+    )
+  )"
+
+lemma delegation_reuse [reuse, use_induction]:
+"All sub rsc #cap.
+	HasCapability(sub, rsc) @ #cap &
+	not IsAgent(sub) @ #cap
+	==> 
+	Ex #mk. IsAgent(sub) @ #mk & #mk < #cap"
+end
+
+//
+// Model sanity
+//
+// TODO:
+// - ???
+lemma state_consistency:
+"All sid role pk #peer #tRole.
+	SessionRole(sid, role) @ #tRole &
+	SessionPeer(sid, pk) @ #peer
+	==> (
+		(
+			role = 'I'
+			==> 
+			Ex #resp. SessionResponder(sid, pk) @ #resp
+		) & (
+			role = 'R'
+			==> 
+			Ex #init. SessionInitiator(sid, pk) @ #init
+		)
+	)"
+
+lemma delegation_sane:
+"All sub rsc #cap.
+	HasCapability(sub, rsc) @ #cap
+	==> 
+	(
+		Ex sub2 #del.
+			Delegator(sub2) @ #cap &
+			HasCapability(sub2, rsc) @ #del &
+			#del < #cap
+	) | (
+		sub = rsc &
+		IsAgent(sub) @ #cap
+	)
+	"
+end
